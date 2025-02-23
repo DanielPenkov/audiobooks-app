@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.danielpjenkov.iskconbooks",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {
@@ -20,7 +21,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#cb8e5e"
       },
-      "package": "com.danielpjenkov.iskconbooks"
+      "package": "com.danielpjenkov.iskconbooks",
+      "permissions": ["FOREGROUND_SERVICE"]
     },
     "web": {
       "bundler": "metro",

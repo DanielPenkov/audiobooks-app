@@ -71,7 +71,14 @@ export default function TabsLayout() {
                     headerTitleAlign: 'center',  // Center the header title
                 }}
             />
-            <Tabs.Screen name="player" options={{ href: '/player', title: "Player" }} />
+            <Tabs.Screen
+                name="player"
+                options={{
+                    title: "Player",
+                    tabBarStyle: { display: "none" }, // Hide tab bar for Player
+                    headerShown: false,               // Hide top header if needed
+                }}
+            />
             <Tabs.Screen name="profile" options={{ href: '/profile', title: "Profile" }} />
         </Tabs>
     ) : null;

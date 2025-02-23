@@ -15,6 +15,7 @@ import axios from "axios";
 import { router } from "expo-router";
 import { isFileDownloaded, fetchNewSignedUrl } from "../../utils/fileManager";
 import { Ionicons } from "@expo/vector-icons";
+import {cleanup} from "jest-snapshot";
 
 const { width } = Dimensions.get("window");
 
@@ -59,7 +60,22 @@ const HomeScreen = () => {
                     const product = productResponse.data;
                     const galleryIds = JSON.parse(product.metadata.gallery_ids);
 
-                    let imageUrl = "";
+                    let metaData = {};
+                    try {
+                        const cleanedData = product.metadata.meta_description
+                            ?.replace(/\\n/g, '')   // Remove newlines
+                            ?.replace(/\\u[\dA-Fa-f]{4}/g, '') // Remove Unicode sequences
+                            ?.trim();
+
+                        if (cleanedData) {
+                            metaData = JSON.parse(cleanedData);
+                        }
+                    } catch (error) {
+                        console.error("Error parsing metadata:", error);
+                    }
+
+
+                        let imageUrl = "";
                     if (galleryIds.length > 0) {
                         const mediaResponse = await axios.get(
                             `${API_URL}/wp/v2/media/${galleryIds[0]}`,
@@ -71,9 +87,9 @@ const HomeScreen = () => {
                     return {
                         id: productId,
                         name: product.name,
-                        author: "By: Unknown",
-                        narrator: "With: Unknown",
-                        duration: "Audio • 8h 56m",
+                        author: metaData.author || "By: Unknown",
+                        narrator: metaData.narrator || "With: Unknown",
+                        duration: metaData.duration || "Audio • Unknown duration",
                         image: imageUrl,
                     };
                 })
@@ -92,28 +108,29 @@ const HomeScreen = () => {
     };
 
     const handleListenNow = async (book) => {
+        if (global.currentSound) {
+            await global.currentSound.unloadAsync();
+            global.currentSound = null;
+        }
+
         const signedUrl = await fetchNewSignedUrl(book.id);
         const isDownloaded = await isFileDownloaded(book.id);
 
-        // Save the last book details in AsyncStorage
-        await AsyncStorage.setItem("lastListenedBook", JSON.stringify({
+        const bookData = {
             bookId: book.id,
             bookTitle: book.name,
             bookImage: book.image,
             audioUrl: signedUrl,
-            isLocal: isDownloaded,
-        }));
+            isLocal: isDownloaded
+        };
 
-        // Navigate to Player with the current book
+        // Save the new book as the last listened book
+        await AsyncStorage.setItem("lastListenedBook", JSON.stringify(bookData));
+
+        // Navigate to Player with the new book params
         router.push({
             pathname: "/player",
-            params: {
-                audioUrl: signedUrl,
-                isLocal: isDownloaded,
-                bookId: book.id,
-                bookTitle: book.name,
-                bookImage: book.image,
-            },
+            params: bookData,
         });
     };
 

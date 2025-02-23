@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import {
     View,
@@ -8,6 +7,7 @@ import {
     StyleSheet,
     Image,
     ImageBackground,
+    AppState
 } from "react-native";
 import { Audio } from "expo-av";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -21,7 +21,6 @@ const PlayerScreen = () => {
     const router = useRouter();
     const { audioUrl, isLocal, bookId, bookTitle, bookImage } = useLocalSearchParams();
 
-    // Book data state to manage current book details (initialized as null)
     const [bookData, setBookData] = useState(null);
     const [sound, setSound] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -31,82 +30,153 @@ const PlayerScreen = () => {
     const [speed, setSpeed] = useState(1.0);
     const [isDownloaded, setIsDownloaded] = useState(false);
 
-    // Load last listened book on initial render
+    // Load book data when navigation params change or from AsyncStorage
     useEffect(() => {
-        const loadLastBook = async () => {
-            const lastBook = await AsyncStorage.getItem("lastListenedBook");
-            if (lastBook) {
-                const parsedBook = JSON.parse(lastBook);
-                console.log("Loading last book:", parsedBook.bookTitle);
-                setBookData(parsedBook);
+        const loadBookData = async () => {
+            if (audioUrl && bookId) {
+                // Book was passed from index.js
+                const newBookData = {
+                    bookId,
+                    bookTitle,
+                    bookImage,
+                    audioUrl,
+                    isLocal
+                };
+
+                // Save new book in AsyncStorage
+                await AsyncStorage.setItem("lastListenedBook", JSON.stringify(newBookData));
+                setBookData(newBookData);
+
+                // Stop previous audio and load new
+                if (sound) {
+                    await sound.unloadAsync();
+                    setSound(null);
+                }
+                loadSound(newBookData);
+            } else {
+                // Fallback to last listened book
+                const lastBook = await AsyncStorage.getItem("lastListenedBook");
+                if (lastBook) {
+                    const parsedBook = JSON.parse(lastBook);
+                    setBookData(parsedBook);
+                    loadSound(parsedBook);
+                }
             }
         };
 
-        loadLastBook();
+        loadBookData();
+    }, [audioUrl, bookId]);
+
+    // Configure Audio Mode
+    useEffect(() => {
+        const configureAudio = async () => {
+            try {
+                await Audio.setAudioModeAsync({
+                    allowsRecordingIOS: false,
+                    staysActiveInBackground: true,
+                    interruptionModeIOS: 1,
+                    playsInSilentModeIOS: true,
+                    shouldDuckAndroid: true,
+                    interruptionModeAndroid: 1,
+                    playThroughEarpieceAndroid: false,
+                });
+            } catch (error) {
+                console.error("Failed to configure audio:", error);
+            }
+        };
+
+        configureAudio();
     }, []);
 
-    // Load sound only when bookData is available
-    useEffect(() => {
-        if (bookData) {
-            loadSound();
-        }
-
-        return () => {
-            if (sound) sound.unloadAsync();
-        };
-    }, [bookData]);
-
-    const loadSound = async () => {
+    // Load Audio
+    const loadSound = async (book) => {
         try {
-            if (!bookData || !bookData.audioUrl) {
+            if (!book || !book.audioUrl) {
                 console.error("No valid book data or audio source available.");
                 setLoading(false);
                 return;
             }
 
-            console.log("Book data for audio loading:", bookData);
+            console.log("Loading audio for book:", book.bookTitle);
 
-            let finalUrl = bookData.audioUrl;
-
-            // Check if local file exists
-            const savedPath = await AsyncStorage.getItem(`audio-path-${bookData.bookId}`);
-            if (savedPath) {
-                const localUri = `${FileSystem.documentDirectory}${savedPath}`;
-                const fileInfo = await FileSystem.getInfoAsync(localUri);
-                if (fileInfo.exists) {
-                    finalUrl = localUri;
-                }
+            // Unload previous sound
+            if (sound) {
+                await sound.unloadAsync();
+                setSound(null);
             }
 
-            console.log("Attempting to load audio from:", finalUrl);
-
-            const { sound } = await Audio.Sound.createAsync(
-                { uri: finalUrl },
+            const { sound: newSound } = await Audio.Sound.createAsync(
+                { uri: book.audioUrl },
                 { shouldPlay: false }
             );
 
-            setSound(sound);
+            setSound(newSound);
             setLoading(false);
 
-            const savedPosition = await AsyncStorage.getItem(`audio-progress-${bookData.bookId}`);
-            if (savedPosition) {
-                await sound.setPositionAsync(parseInt(savedPosition));
-                setPosition(parseInt(savedPosition));
-            }
+            // 👉 Load saved position or start from 0
+            const savedPosition = await AsyncStorage.getItem(`audio-progress-${book.bookId}`);
+            const startPosition = savedPosition ? parseInt(savedPosition) : 0;
+            await newSound.setPositionAsync(startPosition);
+            setPosition(startPosition);
 
-            sound.setOnPlaybackStatusUpdate((status) => {
+            // 👉 Update position while playing only
+            let interval = null;
+
+            newSound.setOnPlaybackStatusUpdate((status) => {
                 if (status.isLoaded) {
                     setPosition(status.positionMillis);
                     setDuration(status.durationMillis || 1);
-                    if (status.didJustFinish) setIsPlaying(false);
+
+                    // Start saving progress only if playing
+                    if (status.isPlaying && !interval) {
+                        interval = setInterval(async () => {
+                            const currentStatus = await newSound.getStatusAsync();
+                            if (currentStatus.isLoaded && currentStatus.isPlaying) {
+                                await AsyncStorage.setItem(`audio-progress-${book.bookId}`, currentStatus.positionMillis.toString());
+                                console.log("Progress saved at:", currentStatus.positionMillis);
+                            }
+                        }, 5000);
+                    }
+
+                    // Clear interval when paused or finished
+                    if (!status.isPlaying && interval) {
+                        clearInterval(interval);
+                        interval = null;
+                    }
+
+                    if (status.didJustFinish) {
+                        setIsPlaying(false);
+                        clearInterval(interval);
+                    }
                 }
             });
+
+            // 👉 Cleanup interval when unloading
+            return () => {
+                if (interval) {
+                    clearInterval(interval);
+                }
+            };
         } catch (error) {
             console.error("Error loading audio:", error);
             setLoading(false);
         }
     };
 
+    // Play/Pause Audio
+    const handlePlayPause = async () => {
+        if (sound) {
+            if (isPlaying) {
+                await sound.pauseAsync();
+                setIsPlaying(false);
+            } else {
+                await sound.playAsync();
+                setIsPlaying(true);
+            }
+        }
+    };
+
+    // Download Audio
     const handleDownload = async () => {
         const fileUri = `${FileSystem.documentDirectory}${bookData.bookId}.mp3`;
 
@@ -129,29 +199,6 @@ const PlayerScreen = () => {
             }
         } catch (error) {
             console.error("Failed to download file:", error);
-        }
-    };
-
-    const handleDelete = async () => {
-        const savedPath = await AsyncStorage.getItem(`audio-path-${bookData.bookId}`);
-        if (savedPath) {
-            const fileUri = `${FileSystem.documentDirectory}${savedPath}`;
-            await FileSystem.deleteAsync(fileUri);
-            await AsyncStorage.removeItem(`audio-path-${bookData.bookId}`);
-            setIsDownloaded(false);
-            console.log("File deleted:", fileUri);
-        }
-    };
-
-    const handlePlayPause = async () => {
-        if (sound) {
-            if (isPlaying) {
-                await sound.pauseAsync();
-                setIsPlaying(false);
-            } else {
-                await sound.playAsync();
-                setIsPlaying(true);
-            }
         }
     };
 
@@ -221,15 +268,17 @@ const PlayerScreen = () => {
                     </TouchableOpacity>
                 </View>
 
-                <Image
-                    source={{ uri: bookData.bookImage, cache: 'force-cache' }}
-                    style={styles.cover}
-                    onError={() => console.warn("Failed to load image.")}
-                    resizeMode="cover"
-                />
+                <View style={styles.imageContainer}>
+                    <Image
+                        source={{ uri: bookData.bookImage }}
+                        style={styles.cover}
+                        resizeMode="cover"
+                        onError={(error) => console.warn("Image load failed:", error.nativeEvent.error)}
+                    />
+                </View>
 
                 <Text style={styles.remainingTime}>
-                    {formatTime(duration - position)} remaining
+                    {formatTime(position)}
                 </Text>
 
                 <Slider
@@ -288,7 +337,7 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         alignItems: "center",
         paddingHorizontal: 20,
-        marginBottom: 20,
+        marginBottom: 50,
     },
     headerButton: {
         padding: 5,
@@ -300,17 +349,25 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
         textAlign: "center",
     },
+    imageContainer: {
+        width: 180,
+        height: 300,
+        overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: '',
+        marginBottom: 50
+    },
+
     cover: {
-        width: 300,
+        width: 200,
         height: 300,
         borderRadius: 10,
-        marginBottom: 10,
-        marginTop: 10,
     },
     remainingTime: {
         color: "lightgray",
         fontSize: 14,
         marginBottom: 10,
+        textAlign: "right"
     },
     progressBar: {
         width: "90%",
@@ -323,7 +380,7 @@ const styles = StyleSheet.create({
         width: "100%",
         paddingVertical: 10,
         position: "absolute",
-        bottom: 20,
+        bottom: 50,
     },
     controlButton: {
         padding: 10,
