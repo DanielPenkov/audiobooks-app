@@ -37,25 +37,40 @@ export default function TabsLayout() {
         <Tabs
             initialRouteName="index"
             screenOptions={({ route }) => ({
+                headerShown: false,
                 tabBarIcon: ({ focused, color, size }) => {
                     let iconName;
 
                     if (route.name === 'index') {
                         iconName = focused ? 'library' : 'library-outline';
                     } else if (route.name === 'player') {
-                        iconName = focused ? 'play' : 'play-outline';
+                        iconName = focused ? 'headset' : 'headset-outline';
                     } else if (route.name === 'profile') {
                         iconName = focused ? 'person' : 'person-outline';
                     }
 
-                    return <Ionicons name={iconName} size={size} color={color} />;
+                    return <Ionicons name={iconName} size={30} color={color} />;
                 },
                 tabBarActiveTintColor: '#cb8e5e',
                 tabBarInactiveTintColor: 'gray',
                 tabBarStyle: { backgroundColor: '#fff', paddingBottom: 5 },
             })}
         >
-            <Tabs.Screen name="index" options={{ href: '/', title: "Library" }} />
+            <Tabs.Screen
+                name="index"
+                options={{
+                    href: '/',
+                    title: "My Books",  // Custom header for the Library tab
+                    headerShown: true,  // Enable header only for this tab
+                    headerStyle: {
+                        backgroundColor: '#FAF7F5',  // Header background color
+                        elevation: 0,  // Remove shadow on Android
+                        shadowOpacity: 0,  // Remove shadow on iOS
+                    },
+                    headerTintColor: '#333',  // Title text color
+                    headerTitleAlign: 'center',  // Center the header title
+                }}
+            />
             <Tabs.Screen name="player" options={{ href: '/player', title: "Player" }} />
             <Tabs.Screen name="profile" options={{ href: '/profile', title: "Profile" }} />
         </Tabs>

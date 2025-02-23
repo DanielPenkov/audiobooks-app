@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from "react";
 import {
     View,
@@ -12,19 +13,17 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { router } from "expo-router";
-import { isFileDownloaded, downloadFile, deleteFile, fetchNewSignedUrl } from "../../utils/fileManager";
+import { isFileDownloaded, fetchNewSignedUrl } from "../../utils/fileManager";
 import { Ionicons } from "@expo/vector-icons";
 
 const { width } = Dimensions.get("window");
 
-// ✅ Use Expo's environment variables instead of @env
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const SURECART_API_KEY = process.env.EXPO_PUBLIC_SURECART_API_KEY;
 
 const HomeScreen = () => {
     const [books, setBooks] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [downloadedBooks, setDownloadedBooks] = useState({});
 
     useEffect(() => {
         fetchLibrary();
@@ -93,44 +92,29 @@ const HomeScreen = () => {
     };
 
     const handleListenNow = async (book) => {
-        if (await isFileDownloaded(book.id)) {
-            router.push({
-                pathname: "/player",
-                params: {
-                    bookId: book.id,
-                    isLocal: true,
-                    bookTitle: book.name,
-                    bookImage: book.image,
-                },
-            });
-            return;
-        }
-
         const signedUrl = await fetchNewSignedUrl(book.id);
+        const isDownloaded = await isFileDownloaded(book.id);
+
+        // Save the last book details in AsyncStorage
+        await AsyncStorage.setItem("lastListenedBook", JSON.stringify({
+            bookId: book.id,
+            bookTitle: book.name,
+            bookImage: book.image,
+            audioUrl: signedUrl,
+            isLocal: isDownloaded,
+        }));
+
+        // Navigate to Player with the current book
         router.push({
             pathname: "/player",
             params: {
                 audioUrl: signedUrl,
-                isLocal: false,
+                isLocal: isDownloaded,
                 bookId: book.id,
                 bookTitle: book.name,
                 bookImage: book.image,
             },
         });
-    };
-
-    const handleDownload = async (bookId) => {
-        if (await isFileDownloaded(bookId)) {
-            await deleteFile(bookId);
-            setDownloadedBooks((prev) => ({ ...prev, [bookId]: false }));
-            return;
-        }
-
-        const signedUrl = await fetchNewSignedUrl(bookId);
-        const fileUri = await downloadFile(bookId, signedUrl);
-        if (fileUri) {
-            setDownloadedBooks((prev) => ({ ...prev, [bookId]: true }));
-        }
     };
 
     if (loading) return <ActivityIndicator size="large" color="#007bff" style={styles.loading} />;
@@ -149,17 +133,6 @@ const HomeScreen = () => {
                             <Text style={styles.bookInfo}>{item.author}</Text>
                             <Text style={styles.bookInfo}>{item.narrator}</Text>
                             <Text style={styles.bookInfo}>{item.duration}</Text>
-                        </View>
-
-                        {/* Download Button on Bottom Right */}
-                        <View style={styles.actionButtons}>
-                            <TouchableOpacity onPress={() => handleDownload(item.id)} style={styles.downloadButton}>
-                                {downloadedBooks[item.id] ? (
-                                    <Ionicons name={"trash-outline"} size={25} color={"gray"} />
-                                ) : (
-                                    <Ionicons name={"cloud-download-outline"} size={25} color={"gray"} />
-                                )}
-                            </TouchableOpacity>
                         </View>
                     </TouchableOpacity>
                 )}
@@ -181,13 +154,6 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         alignItems: "center",
     },
-    header: {
-        fontSize: 24,
-        fontWeight: "bold",
-        textAlign: "center",
-        marginVertical: 20,
-        color: "#333",
-    },
     listContainer: {
         paddingHorizontal: 10,
         paddingBottom: 20,
@@ -206,7 +172,6 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 4,
         elevation: 2,
-        position: "relative",
     },
     bookImage: {
         width: 90,
@@ -225,16 +190,5 @@ const styles = StyleSheet.create({
     bookInfo: {
         fontSize: 14,
         color: "#666",
-    },
-    actionButtons: {
-        position: "absolute",
-        bottom: 15,
-        right: 15,
-        alignItems: "center",
-    },
-    downloadButton: {
-        backgroundColor: "transparent",
-        padding: 5,
-        borderRadius: 8,
     },
 });
