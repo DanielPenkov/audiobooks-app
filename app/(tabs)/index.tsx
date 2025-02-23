@@ -1,74 +1,240 @@
-import { Image, StyleSheet, Platform } from 'react-native';
+import React, { useEffect, useState } from "react";
+import {
+    View,
+    Text,
+    FlatList,
+    Image,
+    ActivityIndicator,
+    TouchableOpacity,
+    StyleSheet,
+    Dimensions,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
+import { router } from "expo-router";
+import { isFileDownloaded, downloadFile, deleteFile, fetchNewSignedUrl } from "../../utils/fileManager";
+import { Ionicons } from "@expo/vector-icons";
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+const { width } = Dimensions.get("window");
 
-export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12'
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          Tap the Explore tab to learn more about what's included in this starter app.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          When you're ready, run{' '}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
-  );
-}
+// ✅ Use Expo's environment variables instead of @env
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const SURECART_API_KEY = process.env.EXPO_PUBLIC_SURECART_API_KEY;
+
+const HomeScreen = () => {
+    const [books, setBooks] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [downloadedBooks, setDownloadedBooks] = useState({});
+
+    useEffect(() => {
+        fetchLibrary();
+    }, []);
+
+    const fetchLibrary = async () => {
+        try {
+            const authToken = await AsyncStorage.getItem("authToken");
+            if (!authToken) throw new Error("Auth token not found");
+
+            const userResponse = await axios.get(`${API_URL}/wp/v2/users/me`, {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            const customerId = userResponse.data.meta?.sc_customer_ids?.test;
+            if (!customerId) throw new Error("Customer ID not found");
+
+            const purchaseResponse = await axios.get(
+                `https://api.surecart.com/v1/purchases?customer_ids[]=${customerId}`,
+                { headers: { Authorization: `Bearer ${SURECART_API_KEY}` } }
+            );
+
+            const purchases = purchaseResponse.data.data;
+
+            const bookDetails = await Promise.all(
+                purchases.map(async (purchase) => {
+                    const productId = purchase.product;
+                    const productResponse = await axios.get(
+                        `https://api.surecart.com/v1/products/${productId}`,
+                        { headers: { Authorization: `Bearer ${SURECART_API_KEY}` } }
+                    );
+
+                    const product = productResponse.data;
+                    const galleryIds = JSON.parse(product.metadata.gallery_ids);
+
+                    let imageUrl = "";
+                    if (galleryIds.length > 0) {
+                        const mediaResponse = await axios.get(
+                            `${API_URL}/wp/v2/media/${galleryIds[0]}`,
+                            { headers: { Authorization: `Bearer ${authToken}` } }
+                        );
+                        imageUrl = mediaResponse.data.source_url;
+                    }
+
+                    return {
+                        id: productId,
+                        name: product.name,
+                        author: "By: Unknown",
+                        narrator: "With: Unknown",
+                        duration: "Audio • 8h 56m",
+                        image: imageUrl,
+                    };
+                })
+            );
+
+            const uniqueBooks = bookDetails.filter((book, index, self) =>
+                index === self.findIndex((b) => b.id === book.id)
+            );
+
+            setBooks(uniqueBooks);
+        } catch (error) {
+            console.error("Error fetching books:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleListenNow = async (book) => {
+        if (await isFileDownloaded(book.id)) {
+            router.push({
+                pathname: "/player",
+                params: {
+                    bookId: book.id,
+                    isLocal: true,
+                    bookTitle: book.name,
+                    bookImage: book.image,
+                },
+            });
+            return;
+        }
+
+        const signedUrl = await fetchNewSignedUrl(book.id);
+        router.push({
+            pathname: "/player",
+            params: {
+                audioUrl: signedUrl,
+                isLocal: false,
+                bookId: book.id,
+                bookTitle: book.name,
+                bookImage: book.image,
+            },
+        });
+    };
+
+    const handleDownload = async (bookId) => {
+        if (await isFileDownloaded(bookId)) {
+            await deleteFile(bookId);
+            setDownloadedBooks((prev) => ({ ...prev, [bookId]: false }));
+            return;
+        }
+
+        const signedUrl = await fetchNewSignedUrl(bookId);
+        const fileUri = await downloadFile(bookId, signedUrl);
+        if (fileUri) {
+            setDownloadedBooks((prev) => ({ ...prev, [bookId]: true }));
+        }
+    };
+
+    if (loading) return <ActivityIndicator size="large" color="#007bff" style={styles.loading} />;
+
+    return (
+        <View style={styles.container}>
+            <FlatList
+                data={books}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={styles.listContainer}
+                renderItem={({ item }) => (
+                    <TouchableOpacity onPress={() => handleListenNow(item)} style={styles.bookItem}>
+                        <Image source={{ uri: item.image }} style={styles.bookImage} />
+                        <View style={styles.bookDetails}>
+                            <Text style={styles.bookTitle}>{item.name}</Text>
+                            <Text style={styles.bookInfo}>{item.author}</Text>
+                            <Text style={styles.bookInfo}>{item.narrator}</Text>
+                            <Text style={styles.bookInfo}>{item.duration}</Text>
+                        </View>
+
+                        {/* Download Button on Bottom Right */}
+                        <View style={styles.actionButtons}>
+                            <TouchableOpacity onPress={() => handleDownload(item.id)} style={styles.downloadButton}>
+                                {downloadedBooks[item.id] ? (
+                                    <Ionicons name={"trash-outline"} size={25} color={"gray"} />
+                                ) : (
+                                    <Ionicons name={"cloud-download-outline"} size={25} color={"gray"} />
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </TouchableOpacity>
+                )}
+            />
+        </View>
+    );
+};
+
+export default HomeScreen;
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+    container: {
+        flex: 1,
+        backgroundColor: "#FAF7F5",
+        paddingTop: 20,
+    },
+    loading: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    header: {
+        fontSize: 24,
+        fontWeight: "bold",
+        textAlign: "center",
+        marginVertical: 20,
+        color: "#333",
+    },
+    listContainer: {
+        paddingHorizontal: 10,
+        paddingBottom: 20,
+    },
+    bookItem: {
+        flexDirection: "row",
+        padding: 15,
+        alignItems: "center",
+        borderBottomWidth: 1,
+        borderColor: "#ddd",
+        backgroundColor: "#FFF",
+        borderRadius: 10,
+        marginBottom: 10,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+        position: "relative",
+    },
+    bookImage: {
+        width: 90,
+        height: 130,
+        borderRadius: 10,
+    },
+    bookDetails: {
+        flex: 1,
+        marginLeft: 15,
+    },
+    bookTitle: {
+        fontSize: 18,
+        fontWeight: "bold",
+        color: "#333",
+    },
+    bookInfo: {
+        fontSize: 14,
+        color: "#666",
+    },
+    actionButtons: {
+        position: "absolute",
+        bottom: 15,
+        right: 15,
+        alignItems: "center",
+    },
+    downloadButton: {
+        backgroundColor: "transparent",
+        padding: 5,
+        borderRadius: 8,
+    },
 });
