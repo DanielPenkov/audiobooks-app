@@ -7,7 +7,7 @@ import {
     StyleSheet,
     Image,
     ImageBackground,
-    AppState
+    Alert
 } from "react-native";
 import { Audio } from "expo-av";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -15,11 +15,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Slider from "@react-native-community/slider";
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system";
-import { getFileUri, fetchNewSignedUrl, isFileDownloaded, downloadFile, deleteFile } from "../../utils/fileManager";
+import { getFileUri, fetchNewSignedUrl, isFileDownloaded, deleteFile } from "../../utils/fileManager";
 
 const PlayerScreen = () => {
     const router = useRouter();
-    const { audioUrl, isLocal, bookId, bookTitle, bookImage } = useLocalSearchParams();
+    const { audioUrl, bookId, bookTitle, bookImage, bookAuthor, bookNarrator } = useLocalSearchParams();
 
     const [bookData, setBookData] = useState(null);
     const [sound, setSound] = useState(null);
@@ -30,36 +30,35 @@ const PlayerScreen = () => {
     const [speed, setSpeed] = useState(1.0);
     const [isDownloaded, setIsDownloaded] = useState(false);
 
-    // Load book data when navigation params change or from AsyncStorage
     useEffect(() => {
         const loadBookData = async () => {
             if (audioUrl && bookId) {
-                // Book was passed from index.js
                 const newBookData = {
                     bookId,
                     bookTitle,
                     bookImage,
+                    bookAuthor,
+                    bookNarrator,
                     audioUrl,
-                    isLocal
                 };
 
-                // Save new book in AsyncStorage
                 await AsyncStorage.setItem("lastListenedBook", JSON.stringify(newBookData));
                 setBookData(newBookData);
 
-                // Stop previous audio and load new
                 if (sound) {
                     await sound.unloadAsync();
                     setSound(null);
                 }
                 loadSound(newBookData);
             } else {
-                // Fallback to last listened book
                 const lastBook = await AsyncStorage.getItem("lastListenedBook");
                 if (lastBook) {
                     const parsedBook = JSON.parse(lastBook);
                     setBookData(parsedBook);
                     loadSound(parsedBook);
+                } else {
+                    setBookData(null);
+                    setLoading(false);
                 }
             }
         };
@@ -67,7 +66,6 @@ const PlayerScreen = () => {
         loadBookData();
     }, [audioUrl, bookId]);
 
-    // Configure Audio Mode
     useEffect(() => {
         const configureAudio = async () => {
             try {
@@ -81,7 +79,6 @@ const PlayerScreen = () => {
                     playThroughEarpieceAndroid: false,
                 });
             } catch (error) {
-                console.error("Failed to configure audio:", error);
             }
         };
 
@@ -92,28 +89,28 @@ const PlayerScreen = () => {
     const loadSound = async (book) => {
         try {
             if (!book || !book.audioUrl) {
-                console.error("No valid book data or audio source available.");
                 setLoading(false);
                 return;
             }
 
-            console.log("Loading audio for book:", book.bookTitle);
-
-            // Unload previous sound
             if (sound) {
                 await sound.unloadAsync();
                 setSound(null);
             }
 
+            const fileExists = await isFileDownloaded(book.bookId);
+            setIsDownloaded(fileExists);
+            let fileUri = fileExists ? getFileUri(book.bookId) : book.audioUrl;
+
             const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: book.audioUrl },
+                { uri: fileUri },
                 { shouldPlay: false }
             );
 
             setSound(newSound);
             setLoading(false);
 
-            // 👉 Load saved position or start from 0
+            // Load saved position or start from 0
             const savedPosition = await AsyncStorage.getItem(`audio-progress-${book.bookId}`);
             const startPosition = savedPosition ? parseInt(savedPosition) : 0;
             await newSound.setPositionAsync(startPosition);
@@ -133,7 +130,6 @@ const PlayerScreen = () => {
                             const currentStatus = await newSound.getStatusAsync();
                             if (currentStatus.isLoaded && currentStatus.isPlaying) {
                                 await AsyncStorage.setItem(`audio-progress-${book.bookId}`, currentStatus.positionMillis.toString());
-                                console.log("Progress saved at:", currentStatus.positionMillis);
                             }
                         }, 5000);
                     }
@@ -158,12 +154,12 @@ const PlayerScreen = () => {
                 }
             };
         } catch (error) {
-            console.error("Error loading audio:", error);
             setLoading(false);
+
+            Alert.alert("Грешка", error);
         }
     };
 
-    // Play/Pause Audio
     const handlePlayPause = async () => {
         if (sound) {
             if (isPlaying) {
@@ -193,12 +189,10 @@ const PlayerScreen = () => {
         try {
             const { uri } = await downloadResumable.downloadAsync();
             if (uri) {
-                console.log("File successfully downloaded to:", uri);
                 await AsyncStorage.setItem(`audio-path-${bookData.bookId}`, `${bookData.bookId}.mp3`);
                 setIsDownloaded(true);
             }
         } catch (error) {
-            console.error("Failed to download file:", error);
         }
     };
 
@@ -237,8 +231,11 @@ const PlayerScreen = () => {
 
     if (!bookData) {
         return (
-            <View style={styles.container}>
-                <Text style={{ color: "white" }}>No book selected. Please choose a book to play.</Text>
+            <View style={styles.noBookContainer}>
+                <Text style={styles.noBookText}>Няма избрана книга.</Text>
+                <TouchableOpacity onPress={() => router.replace("/")} style={styles.returnButton}>
+                    <Text style={styles.returnButtonText}>Върнете се към началото</Text>
+                </TouchableOpacity>
             </View>
         );
     }
@@ -258,14 +255,6 @@ const PlayerScreen = () => {
                     <Text style={styles.title} numberOfLines={2} ellipsizeMode="tail">
                         {bookData.bookTitle}
                     </Text>
-
-                    <TouchableOpacity onPress={handleDownload} style={styles.headerButton}>
-                        <Ionicons
-                            name={isDownloaded ? "trash-outline" : "cloud-download-outline"}
-                            size={25}
-                            color="white"
-                        />
-                    </TouchableOpacity>
                 </View>
 
                 <View style={styles.imageContainer}>
@@ -277,20 +266,27 @@ const PlayerScreen = () => {
                     />
                 </View>
 
-                <Text style={styles.remainingTime}>
-                    {formatTime(position)}
-                </Text>
+                <View style={styles.bookInfoContainer}>
+                    <Text style={styles.authorText}>{bookData.bookAuthor || "Unknown Author"}</Text>
+                    <Text style={styles.narratorText}>{bookData.bookNarrator ? `Прочетено от ${bookData.bookNarrator}` : "Narrator Unknown"}</Text>
+                </View>
 
-                <Slider
-                    style={styles.progressBar}
-                    minimumValue={0}
-                    maximumValue={duration}
-                    value={position}
-                    onValueChange={(value) => sound?.setPositionAsync(value)}
-                    minimumTrackTintColor="white"
-                    maximumTrackTintColor="gray"
-                    thumbTintColor="white"
-                />
+                <View style={styles.progressContainer}>
+                    <Text style={styles.timeText}>{formatTime(position)}</Text>
+                    <View style={styles.sliderContainer}>
+                        <Slider
+                            style={styles.progressBar}
+                            minimumValue={0}
+                            maximumValue={duration}
+                            value={position}
+                            onValueChange={(value) => sound?.setPositionAsync(value)}
+                            minimumTrackTintColor="white"
+                            maximumTrackTintColor="gray"
+                            thumbTintColor="white"
+                        />
+                    </View>
+                    <Text style={styles.timeText}>{formatTime(duration)}</Text>
+                </View>
 
                 <View style={styles.controlsContainer}>
                     <TouchableOpacity onPress={handleSpeedChange} style={styles.controlButton}>
@@ -308,9 +304,12 @@ const PlayerScreen = () => {
                     <TouchableOpacity onPress={handleSkipForward} style={styles.controlButton}>
                         <Ionicons name="play-forward" size={30} color="white" />
                     </TouchableOpacity>
-
-                    <TouchableOpacity style={styles.controlButton}>
-                        <Ionicons name="moon" size={30} color="white" />
+                    <TouchableOpacity onPress={handleDownload} style={styles.headerButton}>
+                        <Ionicons
+                            name={isDownloaded ? "trash-outline" : "cloud-download-outline"}
+                            size={30}
+                            color="white"
+                        />
                     </TouchableOpacity>
                 </View>
             </View>
@@ -321,6 +320,45 @@ const PlayerScreen = () => {
 export default PlayerScreen;
 
 const styles = StyleSheet.create({
+    bookInfoContainer: {
+        alignItems: "center",
+        marginBottom: 10, // Space before the progress bar
+    },
+    authorText: {
+        color: "white",
+        fontSize: 16,
+        fontWeight: "bold",
+        textAlign: "center",
+        marginBottom: 2, // Space between author and narrator
+    },
+    progressContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        width: "90%",  // Ensures even spacing
+        justifyContent: "space-between",
+        marginTop: 10,
+    },
+
+    sliderContainer: {
+        flex: 1,  // Makes sure slider takes all available space
+        alignItems: "center",
+    },
+
+    progressBar: {
+        width: "100%",  // Ensures slider fills the space
+    },
+
+    timeText: {
+        color: "white",
+        fontSize: 14,
+        minWidth: 40,  // Prevents numbers from getting squeezed
+        textAlign: "center",
+    },
+    narratorText: {
+        color: "lightgray",
+        fontSize: 14,
+        textAlign: "center",
+    },
     background: {
         flex: 1,
         resizeMode: "cover",
@@ -369,10 +407,6 @@ const styles = StyleSheet.create({
         marginBottom: 10,
         textAlign: "right"
     },
-    progressBar: {
-        width: "90%",
-        marginVertical: 10,
-    },
     controlsContainer: {
         flexDirection: "row",
         justifyContent: "space-around",
@@ -393,5 +427,23 @@ const styles = StyleSheet.create({
     controlText: {
         color: "white",
         fontSize: 16,
+    },
+    noBookContainer: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "#f9f4ef",
+    },
+    noBookText: {
+        color: "black",
+        fontSize: 18,
+        textAlign: "center",
+        marginBottom: 20,
+    },
+    returnButton: {
+        backgroundColor: "#cb8e5e",
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        borderRadius: 10,
     },
 });

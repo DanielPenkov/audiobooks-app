@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import {
     View,
@@ -8,16 +7,13 @@ import {
     ActivityIndicator,
     TouchableOpacity,
     StyleSheet,
-    Dimensions,
+    Alert,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { router } from "expo-router";
-import { isFileDownloaded, fetchNewSignedUrl } from "../../utils/fileManager";
-import { Ionicons } from "@expo/vector-icons";
-import {cleanup} from "jest-snapshot";
-
-const { width } = Dimensions.get("window");
+import { fetchNewSignedUrl } from "../../utils/fileManager";
+import { useTheme } from '../ThemeContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const SURECART_API_KEY = process.env.EXPO_PUBLIC_SURECART_API_KEY;
@@ -25,6 +21,8 @@ const SURECART_API_KEY = process.env.EXPO_PUBLIC_SURECART_API_KEY;
 const HomeScreen = () => {
     const [books, setBooks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [noBooks, setNoBooks] = useState(false);
+    const { isDarkTheme } = useTheme(); // Get theme state
 
     useEffect(() => {
         fetchLibrary();
@@ -40,7 +38,10 @@ const HomeScreen = () => {
             });
 
             const customerId = userResponse.data.meta?.sc_customer_ids?.test;
-            if (!customerId) throw new Error("Customer ID not found");
+            if (!customerId) {
+                setNoBooks(true);
+                return;
+            }
 
             const purchaseResponse = await axios.get(
                 `https://api.surecart.com/v1/purchases?customer_ids[]=${customerId}`,
@@ -48,6 +49,11 @@ const HomeScreen = () => {
             );
 
             const purchases = purchaseResponse.data.data;
+
+            if (purchases.length === 0) {
+                setNoBooks(true);
+                return;
+            }
 
             const bookDetails = await Promise.all(
                 purchases.map(async (purchase) => {
@@ -63,19 +69,16 @@ const HomeScreen = () => {
                     let metaData = {};
                     try {
                         const cleanedData = product.metadata.meta_description
-                            ?.replace(/\\n/g, '')   // Remove newlines
-                            ?.replace(/\\u[\dA-Fa-f]{4}/g, '') // Remove Unicode sequences
+                            ?.replace(/\\n/g, '')
+                            ?.replace(/\\u[\dA-Fa-f]{4}/g, '')
                             ?.trim();
 
                         if (cleanedData) {
                             metaData = JSON.parse(cleanedData);
                         }
-                    } catch (error) {
-                        console.error("Error parsing metadata:", error);
-                    }
+                    } catch (error) {}
 
-
-                        let imageUrl = "";
+                    let imageUrl = "";
                     if (galleryIds.length > 0) {
                         const mediaResponse = await axios.get(
                             `${API_URL}/wp/v2/media/${galleryIds[0]}`,
@@ -101,7 +104,7 @@ const HomeScreen = () => {
 
             setBooks(uniqueBooks);
         } catch (error) {
-            console.error("Error fetching books:", error);
+            Alert.alert("Грешка", error.message);
         } finally {
             setLoading(false);
         }
@@ -114,20 +117,17 @@ const HomeScreen = () => {
         }
 
         const signedUrl = await fetchNewSignedUrl(book.id);
-        const isDownloaded = await isFileDownloaded(book.id);
 
         const bookData = {
             bookId: book.id,
             bookTitle: book.name,
             bookImage: book.image,
+            bookAuthor: book.author,
+            bookNarrator: book.narrator,
             audioUrl: signedUrl,
-            isLocal: isDownloaded
         };
 
-        // Save the new book as the last listened book
         await AsyncStorage.setItem("lastListenedBook", JSON.stringify(bookData));
-
-        // Navigate to Player with the new book params
         router.push({
             pathname: "/player",
             params: bookData,
@@ -136,20 +136,29 @@ const HomeScreen = () => {
 
     if (loading) return <ActivityIndicator size="large" color="#007bff" style={styles.loading} />;
 
+    if (noBooks) {
+        return (
+            <View style={[styles.noBooksContainer, isDarkTheme && styles.darkContainer]}>
+                <Text style={[styles.noBooksText, isDarkTheme && styles.darkText]}>Нямате закупени книги.</Text>
+                <Text style={[styles.noBooksSubtitle, isDarkTheme && styles.darkText]}>Моля, посетете сайта, за да закупите книги.</Text>
+            </View>
+        );
+    }
+
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, isDarkTheme && styles.darkContainer]}>
             <FlatList
                 data={books}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={styles.listContainer}
                 renderItem={({ item }) => (
-                    <TouchableOpacity onPress={() => handleListenNow(item)} style={styles.bookItem}>
+                    <TouchableOpacity onPress={() => handleListenNow(item)} style={[styles.bookItem, isDarkTheme && styles.darkBookItem]}>
                         <Image source={{ uri: item.image }} style={styles.bookImage} />
                         <View style={styles.bookDetails}>
-                            <Text style={styles.bookTitle}>{item.name}</Text>
-                            <Text style={styles.bookInfo}>{item.author}</Text>
-                            <Text style={styles.bookInfo}>{item.narrator}</Text>
-                            <Text style={styles.bookInfo}>{item.duration}</Text>
+                            <Text style={[styles.bookTitle, isDarkTheme && styles.darkText]}>{item.name}</Text>
+                            <Text style={[styles.bookInfo, isDarkTheme && styles.darkText]}>{item.author}</Text>
+                            <Text style={[styles.bookInfo, isDarkTheme && styles.darkText]}>{item.narrator}</Text>
+                            <Text style={[styles.bookInfo, isDarkTheme && styles.darkText]}>{item.duration}</Text>
                         </View>
                     </TouchableOpacity>
                 )}
@@ -166,10 +175,34 @@ const styles = StyleSheet.create({
         backgroundColor: "#FAF7F5",
         paddingTop: 20,
     },
+    darkContainer: {
+        backgroundColor: "#121212", // Dark mode background
+    },
     loading: {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
+    },
+    noBooksContainer: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        paddingHorizontal: 20,
+    },
+    noBooksText: {
+        fontSize: 20,
+        fontWeight: "bold",
+        color: "#333",
+        textAlign: "center",
+    },
+    noBooksSubtitle: {
+        fontSize: 16,
+        color: "#666",
+        textAlign: "center",
+        marginTop: 10,
+    },
+    darkText: {
+        color: "#FFF", // White text for dark mode
     },
     listContainer: {
         paddingHorizontal: 10,
@@ -189,6 +222,10 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 4,
         elevation: 2,
+    },
+    darkBookItem: {
+        backgroundColor: "#1E1E1E", // Dark mode card background
+        borderColor: "#333", // Darker border
     },
     bookImage: {
         width: 90,

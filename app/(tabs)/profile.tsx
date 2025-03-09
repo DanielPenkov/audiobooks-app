@@ -3,18 +3,19 @@ import { View, Text, Image, TouchableOpacity, ActivityIndicator, Alert, Switch, 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
+import { useTheme } from '../ThemeContext';
 
 const ProfileScreen = () => {
     const router = useRouter();
+    const { isDarkTheme, toggleTheme } = useTheme();
     const [loading, setLoading] = useState(true);
     const [userData, setUserData] = useState(null);
-    const [storedUsername, setStoredUsername] = useState(''); // ✅ Store username as email
-    const [isDarkTheme, setIsDarkTheme] = useState(false);
+    const [storedUsername, setStoredUsername] = useState('');
 
     useEffect(() => {
         const fetchUserData = async () => {
             try {
-                const username =  await SecureStore.getItemAsync('username');
+                const username = await SecureStore.getItemAsync('username');
                 setStoredUsername(username || "No Email Stored");
 
                 const token = await AsyncStorage.getItem('authToken');
@@ -46,15 +47,11 @@ const ProfileScreen = () => {
         fetchUserData();
     }, []);
 
-    // ✅ Logout Function
     const handleLogout = async () => {
         await AsyncStorage.removeItem('authToken');
-        await AsyncStorage.removeItem('username'); // ✅ Clear stored username
+        await AsyncStorage.removeItem('username');
         router.replace('/login');
     };
-
-    // ✅ Toggle Theme Function
-    const toggleTheme = () => setIsDarkTheme((prev) => !prev);
 
     if (loading) {
         return (
@@ -66,29 +63,23 @@ const ProfileScreen = () => {
 
     return (
         <View style={[styles.container, isDarkTheme && styles.darkContainer]}>
-            {/* ✅ User Avatar */}
             <Image
                 source={{ uri: userData?.avatar_urls?.["96"] || "https://via.placeholder.com/96" }}
                 style={styles.avatar}
             />
-
-            {/* ✅ User Info */}
             <Text style={[styles.name, isDarkTheme && styles.darkText]}>
                 {userData?.name || "Unknown User"}
             </Text>
             <Text style={[styles.email, isDarkTheme && styles.darkText]}>
-                {storedUsername} {/* ✅ Use stored username as email */}
+                {storedUsername}
             </Text>
 
-            {/* ✅ Theme Toggle */}
             <View style={styles.themeSwitch}>
                 <Text style={[styles.themeText, isDarkTheme && styles.darkText]}>
                     {isDarkTheme ? "Dark Mode" : "Light Mode"}
                 </Text>
                 <Switch value={isDarkTheme} onValueChange={toggleTheme} />
             </View>
-
-            {/* ✅ Logout Button */}
             <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
                 <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>

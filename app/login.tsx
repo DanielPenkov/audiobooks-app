@@ -2,15 +2,21 @@ import React, { useState } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator, Image, StyleSheet
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation } from 'expo-router';
 import { loginUser } from '../utils/api';
+import { useEffect } from 'react';
 
 const LoginScreen = () => {
     const router = useRouter();
+    const navigation = useNavigation();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [emailError, setEmailError] = useState('');
+
+    useEffect(() => {
+        navigation.setOptions({ headerShown: false });
+    }, [navigation]);
 
     const validateEmail = (inputEmail) => {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -20,7 +26,7 @@ const LoginScreen = () => {
     const handleLogin = async () => {
         setEmailError('');
         if (!validateEmail(email)) {
-            setEmailError("❌ Please enter a valid email address.");
+            setEmailError("Моля, въведете валиден имейл адрес.");
             return;
         }
 
@@ -29,13 +35,13 @@ const LoginScreen = () => {
             const { success, token } = await loginUser(email, password);
 
             if (!success) {
-                throw new Error("Login failed. Please try again.");
+                throw new Error("Моля, опитайте отново.");
             }
 
             router.replace("/");
 
         } catch (error) {
-            Alert.alert("❌ Login Failed", error.message);
+            Alert.alert("Неуспешен опит за вход", error.message);
         }
         setLoading(false);
     };
@@ -43,8 +49,7 @@ const LoginScreen = () => {
     return (
         <View style={styles.container}>
             <Image source={require('../assets/images/login-icon.png')} style={styles.logo} />
-            <Text style={styles.title}>Hare Krishna!</Text>
-            <Text style={styles.subtitle}>Login to continue</Text>
+            <Text style={styles.title}>Харе Кришна!</Text>
 
             <TextInput
                 placeholder="Email"
@@ -67,7 +72,7 @@ const LoginScreen = () => {
             />
 
             <TouchableOpacity onPress={handleLogin} style={styles.loginButton}>
-                {loading ? <ActivityIndicator color="white" /> : <Text style={styles.buttonText}>Login</Text>}
+                {loading ? <ActivityIndicator color="white" /> : <Text style={styles.buttonText}>Вход</Text>}
             </TouchableOpacity>
         </View>
     );
@@ -84,8 +89,8 @@ const styles = StyleSheet.create({
         padding: 20,
     },
     logo: {
-        width: 100,
-        height: 100,
+        width: 150,
+        height: 150,
         resizeMode: 'contain',
         marginBottom: 20,
     },
@@ -93,11 +98,7 @@ const styles = StyleSheet.create({
         fontSize: 28,
         fontWeight: 'bold',
         color: "#cb8e5e",
-    },
-    subtitle: {
-        fontSize: 16,
-        color: "#666",
-        marginBottom: 30,
+        marginBottom: 20,
     },
     input: {
         width: '100%',

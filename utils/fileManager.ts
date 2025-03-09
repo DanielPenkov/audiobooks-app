@@ -1,7 +1,7 @@
 import * as FileSystem from "expo-file-system";
 import axios from "axios";
 
-export const getFileUri = (bookId: string) => `${FileSystem.cacheDirectory}${bookId}.mp3`;
+export const getFileUri = (bookId: string) => `${FileSystem.documentDirectory}${bookId}.mp3`;
 
 /**
  * Checks if a book is already downloaded.
@@ -22,7 +22,6 @@ export const downloadFile = async (bookId: string, signedUrl: string) => {
         await downloadResumable.downloadAsync();
         return fileUri; // Return the saved file path
     } catch (error) {
-        console.error("Error downloading file:", error);
         return null;
     }
 };
@@ -34,9 +33,7 @@ export const deleteFile = async (bookId: string) => {
     try {
         const fileUri = getFileUri(bookId);
         await FileSystem.deleteAsync(fileUri);
-        console.log("File deleted:", fileUri);
     } catch (error) {
-        console.error("Error deleting file:", error);
     }
 };
 
@@ -52,7 +49,6 @@ export const fetchNewSignedUrl = async (bookId: string) => {
 
         return response.data.signed_url;
     } catch (error) {
-        console.error("Error fetching new signed URL:", error);
         return null;
     }
 };
