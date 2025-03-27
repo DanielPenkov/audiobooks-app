@@ -38,7 +38,7 @@ export const loginUser = async (email, password) => {
         });
 
         const { token } = response.data;
-        if (!token) throw new Error("❌ No token received.");
+        if (!token) throw new Error("No token received.");
 
         await AsyncStorage.setItem('authToken', token);
         await saveCredentials(email, password);
@@ -50,7 +50,6 @@ export const loginUser = async (email, password) => {
 };
 
 export const refreshAccessToken = async () => {
-    console.log('Reauching access token...');
     try {
         const { email, password } = await getCredentials();
 
@@ -65,7 +64,7 @@ export const refreshAccessToken = async () => {
         });
 
         const { token: newAccessToken } = response.data;
-        if (!newAccessToken) throw new Error("❌ No new token received.");
+        if (!newAccessToken) throw new Error("No new token received.");
 
         await AsyncStorage.setItem('authToken', newAccessToken);
 
@@ -82,10 +81,8 @@ api.interceptors.response.use(
     response => response,
     async (error) => {
         const originalRequest = error.config;
-
-        if (error.response?.status === 401 && !originalRequest._retry) {
+        if (!originalRequest._retry) {
             originalRequest._retry = true;
-
             const newToken = await refreshAccessToken();
 
             if (!newToken) {

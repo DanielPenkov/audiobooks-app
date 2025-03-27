@@ -10,10 +10,10 @@ import {
     Alert,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import axios from "axios";
 import { router } from "expo-router";
 import { fetchNewSignedUrl } from "../../utils/fileManager";
 import { useTheme } from '../ThemeContext';
+import api from "@/utils/api";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const SURECART_API_KEY = process.env.EXPO_PUBLIC_SURECART_API_KEY;
@@ -33,7 +33,7 @@ const HomeScreen = () => {
             const authToken = await AsyncStorage.getItem("authToken");
             if (!authToken) throw new Error("Auth token not found");
 
-            const userResponse = await axios.get(`${API_URL}/wp/v2/users/me`, {
+            const userResponse = await api.get(`${API_URL}/wp/v2/users/me`, {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
 
@@ -43,7 +43,7 @@ const HomeScreen = () => {
                 return;
             }
 
-            const purchaseResponse = await axios.get(
+            const purchaseResponse = await api.get(
                 `https://api.surecart.com/v1/purchases?customer_ids[]=${customerId}`,
                 { headers: { Authorization: `Bearer ${SURECART_API_KEY}` } }
             );
@@ -58,7 +58,7 @@ const HomeScreen = () => {
             const bookDetails = await Promise.all(
                 purchases.map(async (purchase) => {
                     const productId = purchase.product;
-                    const productResponse = await axios.get(
+                    const productResponse = await api.get(
                         `https://api.surecart.com/v1/products/${productId}`,
                         { headers: { Authorization: `Bearer ${SURECART_API_KEY}` } }
                     );
@@ -80,7 +80,7 @@ const HomeScreen = () => {
 
                     let imageUrl = "";
                     if (galleryIds.length > 0) {
-                        const mediaResponse = await axios.get(
+                        const mediaResponse = await api.get(
                             `${API_URL}/wp/v2/media/${galleryIds[0]}`,
                             { headers: { Authorization: `Bearer ${authToken}` } }
                         );

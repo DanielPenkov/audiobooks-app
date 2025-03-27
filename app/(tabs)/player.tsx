@@ -33,10 +33,22 @@ const PlayerScreen = () => {
     useEffect(() => {
         const loadBookData = async () => {
             if (audioUrl && bookId) {
+                const imageFileName = `${bookId}-cover.jpg`;
+                const imageLocalUri = FileSystem.documentDirectory + imageFileName;
+
+                const fileInfo = await FileSystem.getInfoAsync(imageLocalUri);
+                if (!fileInfo.exists && bookImage) {
+                    try {
+                        await FileSystem.downloadAsync(bookImage, imageLocalUri);
+                    } catch (err) {
+                        console.warn("Image download failed", err);
+                    }
+                }
+
                 const newBookData = {
                     bookId,
                     bookTitle,
-                    bookImage,
+                    bookImage: imageLocalUri,
                     bookAuthor,
                     bookNarrator,
                     audioUrl,
@@ -54,6 +66,7 @@ const PlayerScreen = () => {
                 const lastBook = await AsyncStorage.getItem("lastListenedBook");
                 if (lastBook) {
                     const parsedBook = JSON.parse(lastBook);
+
                     setBookData(parsedBook);
                     loadSound(parsedBook);
                 } else {
@@ -116,7 +129,6 @@ const PlayerScreen = () => {
             await newSound.setPositionAsync(startPosition);
             setPosition(startPosition);
 
-            // 👉 Update position while playing only
             let interval = null;
 
             newSound.setOnPlaybackStatusUpdate((status) => {
@@ -124,7 +136,6 @@ const PlayerScreen = () => {
                     setPosition(status.positionMillis);
                     setDuration(status.durationMillis || 1);
 
-                    // Start saving progress only if playing
                     if (status.isPlaying && !interval) {
                         interval = setInterval(async () => {
                             const currentStatus = await newSound.getStatusAsync();
@@ -134,7 +145,6 @@ const PlayerScreen = () => {
                         }, 5000);
                     }
 
-                    // Clear interval when paused or finished
                     if (!status.isPlaying && interval) {
                         clearInterval(interval);
                         interval = null;
@@ -147,7 +157,6 @@ const PlayerScreen = () => {
                 }
             });
 
-            // 👉 Cleanup interval when unloading
             return () => {
                 if (interval) {
                     clearInterval(interval);

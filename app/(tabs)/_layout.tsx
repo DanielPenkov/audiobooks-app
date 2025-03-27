@@ -10,15 +10,22 @@ export default function TabsLayout() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [initialRoute, setInitialRoute] = useState<'index' | 'player'>('index');
 
     useEffect(() => {
         const checkAuth = async () => {
             const token = await AsyncStorage.getItem('authToken');
             if (!token) {
                 router.replace('/login');
-            } else {
-                setIsAuthenticated(true);
+                return;
             }
+
+            const lastBook = await AsyncStorage.getItem("lastListenedBook");
+            if (lastBook) {
+                setInitialRoute('player');
+            }
+
+            setIsAuthenticated(true);
             setLoading(false);
         };
 
@@ -36,7 +43,7 @@ export default function TabsLayout() {
     return isAuthenticated ? (
         <ThemeProvider>
             <Tabs
-                initialRouteName="index"
+                initialRouteName={initialRoute}
                 screenOptions={({ route }) => ({
                     headerShown: false,
                     tabBarIcon: ({ focused, color, size }) => {
