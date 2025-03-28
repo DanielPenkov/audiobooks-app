@@ -9,9 +9,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import 'expo-dev-client';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
+import TrackPlayer from 'react-native-track-player';
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
+TrackPlayer.registerPlaybackService(() => require('../utils/track-player-service'));
 
 export default function RootLayout() {
     const colorScheme = useColorScheme();

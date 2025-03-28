@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, {useEffect, useRef, useState} from "react";
 import {
     View,
     Text,
@@ -6,29 +6,32 @@ import {
     ActivityIndicator,
     StyleSheet,
     Image,
-    ImageBackground,
-    Alert
+    ImageBackground
 } from "react-native";
-import { Audio } from "expo-av";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Slider from "@react-native-community/slider";
 import { Ionicons } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system";
 import { getFileUri, fetchNewSignedUrl, isFileDownloaded, deleteFile } from "../../utils/fileManager";
+import TrackPlayer, {
+    Capability,
+    useProgress,
+    useTrackPlayerEvents,
+    Event,
+    State,
+} from 'react-native-track-player';
 
 const PlayerScreen = () => {
     const router = useRouter();
     const { audioUrl, bookId, bookTitle, bookImage, bookAuthor, bookNarrator } = useLocalSearchParams();
-
     const [bookData, setBookData] = useState(null);
-    const [sound, setSound] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [position, setPosition] = useState(0);
-    const [duration, setDuration] = useState(1);
-    const [speed, setSpeed] = useState(1.0);
     const [isDownloaded, setIsDownloaded] = useState(false);
+    const [speed, setSpeed] = useState(1.0);
+    const { position, duration } = useProgress(500);
+    const positionRef = useRef(0);
 
     useEffect(() => {
         const loadBookData = async () => {
@@ -38,11 +41,7 @@ const PlayerScreen = () => {
 
                 const fileInfo = await FileSystem.getInfoAsync(imageLocalUri);
                 if (!fileInfo.exists && bookImage) {
-                    try {
-                        await FileSystem.downloadAsync(bookImage, imageLocalUri);
-                    } catch (err) {
-                        console.warn("Image download failed", err);
-                    }
+                    await FileSystem.downloadAsync(bookImage, imageLocalUri);
                 }
 
                 const newBookData = {
@@ -56,19 +55,13 @@ const PlayerScreen = () => {
 
                 await AsyncStorage.setItem("lastListenedBook", JSON.stringify(newBookData));
                 setBookData(newBookData);
-
-                if (sound) {
-                    await sound.unloadAsync();
-                    setSound(null);
-                }
-                loadSound(newBookData);
+                setLoading(false);
             } else {
                 const lastBook = await AsyncStorage.getItem("lastListenedBook");
                 if (lastBook) {
                     const parsedBook = JSON.parse(lastBook);
-
                     setBookData(parsedBook);
-                    loadSound(parsedBook);
+                    setLoading(false);
                 } else {
                     setBookData(null);
                     setLoading(false);
@@ -77,107 +70,84 @@ const PlayerScreen = () => {
         };
 
         loadBookData();
+
     }, [audioUrl, bookId]);
 
     useEffect(() => {
-        const configureAudio = async () => {
-            try {
-                await Audio.setAudioModeAsync({
-                    allowsRecordingIOS: false,
-                    staysActiveInBackground: true,
-                    interruptionModeIOS: 1,
-                    playsInSilentModeIOS: true,
-                    shouldDuckAndroid: true,
-                    interruptionModeAndroid: 1,
-                    playThroughEarpieceAndroid: false,
-                });
-            } catch (error) {
+        if (!bookData) return;
+
+        const setupPlayer = async () => {
+            await TrackPlayer.setupPlayer();
+
+            await TrackPlayer.updateOptions({
+                stopWithApp: false,
+                capabilities: [
+                    Capability.Play,
+                    Capability.Pause,
+                    Capability.SeekTo,
+                    Capability.SkipToNext,
+                    Capability.SkipToPrevious,
+                ],
+                compactCapabilities: [Capability.Play, Capability.Pause],
+            });
+
+            const fileExists = await isFileDownloaded(bookData.bookId);
+            setIsDownloaded(fileExists);
+            const audioSource = fileExists ? getFileUri(bookData.bookId) : bookData.audioUrl;
+
+            await TrackPlayer.reset();
+            await TrackPlayer.add({
+                id: bookData.bookId,
+                url: audioSource,
+                title: bookData.bookTitle,
+                artist: bookData.bookNarrator || bookData.bookAuthor,
+                artwork: bookData.bookImage,
+            });
+
+            const savedPosition = await AsyncStorage.getItem(`audio-progress-${bookData.bookId}`);
+            if (savedPosition) {
+                await TrackPlayer.seekTo(parseInt(savedPosition));
             }
         };
 
-        configureAudio();
-    }, []);
+        setupPlayer();
 
-    // Load Audio
-    const loadSound = async (book) => {
-        try {
-            if (!book || !book.audioUrl) {
-                setLoading(false);
-                return;
-            }
-
-            if (sound) {
-                await sound.unloadAsync();
-                setSound(null);
-            }
-
-            const fileExists = await isFileDownloaded(book.bookId);
-            setIsDownloaded(fileExists);
-            let fileUri = fileExists ? getFileUri(book.bookId) : book.audioUrl;
-
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: fileUri },
-                { shouldPlay: false }
+        const interval = setInterval(async () => {
+            await AsyncStorage.setItem(
+                `audio-progress-${bookData.bookId}`,
+                Math.floor(positionRef.current).toString()
             );
+        }, 5000);
 
-            setSound(newSound);
-            setLoading(false);
+        return () => clearInterval(interval);
+    }, [bookData]);
 
-            // Load saved position or start from 0
-            const savedPosition = await AsyncStorage.getItem(`audio-progress-${book.bookId}`);
-            const startPosition = savedPosition ? parseInt(savedPosition) : 0;
-            await newSound.setPositionAsync(startPosition);
-            setPosition(startPosition);
+    useEffect(() => {
+        positionRef.current = position;
+    }, [position]);
 
-            let interval = null;
+    useTrackPlayerEvents([Event.PlaybackQueueEnded], async (event) => {
+        if (event.position > 0) {
+            await TrackPlayer.seekTo(0);
+            await TrackPlayer.pause();
+            setIsPlaying(false);
 
-            newSound.setOnPlaybackStatusUpdate((status) => {
-                if (status.isLoaded) {
-                    setPosition(status.positionMillis);
-                    setDuration(status.durationMillis || 1);
-
-                    if (status.isPlaying && !interval) {
-                        interval = setInterval(async () => {
-                            const currentStatus = await newSound.getStatusAsync();
-                            if (currentStatus.isLoaded && currentStatus.isPlaying) {
-                                await AsyncStorage.setItem(`audio-progress-${book.bookId}`, currentStatus.positionMillis.toString());
-                            }
-                        }, 5000);
-                    }
-
-                    if (!status.isPlaying && interval) {
-                        clearInterval(interval);
-                        interval = null;
-                    }
-
-                    if (status.didJustFinish) {
-                        setIsPlaying(false);
-                        clearInterval(interval);
-                    }
-                }
-            });
-
-            return () => {
-                if (interval) {
-                    clearInterval(interval);
-                }
-            };
-        } catch (error) {
-            setLoading(false);
-
-            Alert.alert("Грешка", error);
+            await AsyncStorage.setItem(
+                `audio-progress-${bookData.bookId}`,
+                '0'
+            );
         }
-    };
+    });
 
     const handlePlayPause = async () => {
-        if (sound) {
-            if (isPlaying) {
-                await sound.pauseAsync();
-                setIsPlaying(false);
-            } else {
-                await sound.playAsync();
-                setIsPlaying(true);
-            }
+        const state = await TrackPlayer.getState();
+
+        if (state === State.Playing) {
+            await TrackPlayer.pause();
+            setIsPlaying(false);
+        } else {
+            await TrackPlayer.play();
+            setIsPlaying(true);
         }
     };
 
@@ -206,25 +176,23 @@ const PlayerScreen = () => {
     };
 
     const handleSkipForward = async () => {
-        if (sound) {
-            const newPosition = Math.min(position + 15000, duration);
-            await sound.setPositionAsync(newPosition);
-            setPosition(newPosition);
-        }
-    };
+        const currentPosition = await TrackPlayer.getPosition();
+        const currentDuration = await TrackPlayer.getDuration();
+
+        const newPos = Math.min(currentPosition + 15, currentDuration);
+        await TrackPlayer.seekTo(newPos);
+    }
 
     const handleSkipBackward = async () => {
-        if (sound) {
-            const newPosition = Math.max(position - 15000, 0);
-            await sound.setPositionAsync(newPosition);
-            setPosition(newPosition);
-        }
+        const currentPosition = await TrackPlayer.getPosition();
+        const newPos = Math.max(currentPosition - 15, 0);
+        await TrackPlayer.seekTo(newPos);
     };
 
     const handleSpeedChange = async () => {
         const newSpeed = speed === 1.0 ? 1.5 : speed === 1.5 ? 2.0 : 1.0;
         setSpeed(newSpeed);
-        if (sound) await sound.setRateAsync(newSpeed, true);
+        await TrackPlayer.setRate(newSpeed);
     };
 
     const formatTime = (millis) => {
@@ -281,20 +249,20 @@ const PlayerScreen = () => {
                 </View>
 
                 <View style={styles.progressContainer}>
-                    <Text style={styles.timeText}>{formatTime(position)}</Text>
+                    <Text style={styles.timeText}>{formatTime(position * 1000)}</Text>
                     <View style={styles.sliderContainer}>
                         <Slider
                             style={styles.progressBar}
                             minimumValue={0}
                             maximumValue={duration}
                             value={position}
-                            onValueChange={(value) => sound?.setPositionAsync(value)}
+                            onSlidingComplete={(value) => TrackPlayer.seekTo(value)}
                             minimumTrackTintColor="white"
                             maximumTrackTintColor="gray"
                             thumbTintColor="white"
                         />
                     </View>
-                    <Text style={styles.timeText}>{formatTime(duration)}</Text>
+                    <Text style={styles.timeText}>{formatTime(duration * 1000)}</Text>
                 </View>
 
                 <View style={styles.controlsContainer}>
